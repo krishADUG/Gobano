@@ -109,6 +109,7 @@ def solve(
             iterations=0,
             message=invalid_reason,
         )
+    
     ## check if the target pose is reachable and inside the workspace of the robot
     q_ref = robot_model.clamp_to_limits(current_joint_position)
     workspace_reason = _workspace_violation(robot_model, target_pose)
@@ -128,12 +129,27 @@ def solve(
     best_q = list(q)
     best_pose = robot_model.forward_kinematics(q)
     best_cost = _spatial_cost(robot_model, target_pose, q, q_ref, config)
-    if collect_trace:
-        _append_trace(trace, 0, robot_model, target_pose, q, q_ref, config)
     stagnant_count = 0
     max_stagnant_count = 0
 
     for iteration in range(1, config.max_iterations + 1):
+        pose = robot_model.forward_kinematics(q)
+        position_error = _position_error(pose, target_pose)
+        orientation_error = robot_model.orientation_error_norm(q, target_pose)
+        if (
+            position_error <= config.position_tolerance
+            and orientation_error <= config.orientation_tolerance
+        ):
+            return SolveResult(
+                status=SolveStatus.SUCCESS,
+                joint_position=q,
+                achieved_pose=pose,
+                position_error=position_error,
+                orientation_error=orientation_error,
+                iterations=iteration - 1,
+                message="Target reached within tolerances.",
+            )
+        
         error = np.asarray(robot_model.pose_error(q, goal_pose), dtype=float)
         weighted_error = _weighted_error(error, config.orientation_weight)
         position_error = float(np.linalg.norm(error[:3]))
@@ -412,3 +428,20 @@ def _position_error(pose: Pose3D, target_pose: Pose3D) -> float:
         + (target_pose.z - pose.z) ** 2
     )
 
+
+def _spatial_cost(
+    robot_model: RobotModel,
+    target_pose: Pose3D,
+    q: Sequence[float],
+    q_ref: Sequence[float],
+    config: ConstraintConfig,
+) -> float:
+    pose = robot_model.forward_kinematics(q)
+    position_error = _position_error(pose, target_pose)
+    orientation_error = robot_model.orientation_error_norm(q, target_pose)
+    motion_cost = sum((joint - ref) ** 2 for joint, ref in zip(q, q_ref))
+    return (
+        position_error * position_error
+        + (config.orientation_weight * orientation_error) ** 2
+        + config.motion_weight * motion_cost
+    )

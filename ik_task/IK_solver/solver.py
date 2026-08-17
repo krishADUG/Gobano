@@ -1,0 +1,373 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Sequence
+
+import numpy as np
+
+from .pinocchio_model import ALIASES, ROBOTS_ROOT, Pose3D, RobotModel
+from .postprocess import collect_notes
+
+
+class SolveStatus(str, Enum):
+    SUCCESS = "success"
+    APPROXIMATE = "approximate"
+    INVALID_INPUT = "invalid_input"
+    NON_CONVERGENT = "non_convergent"
+
+
+@dataclass(frozen=True)
+class ConstraintConfig:
+    position_tolerance: float
+    orientation_tolerance: float
+    approx_position_multiplier: float
+    approx_orientation_multiplier: float
+    max_iterations: int
+    damping: float
+    max_step: float
+    orientation_weight: float
+    motion_weight: float
+    max_solution_jump: list[float]
+    qp_solver: str
+    improvement_epsilon: float
+    stagnation_iterations: int
+
+
+REQUIRED_CONFIG_KEYS = tuple(ConstraintConfig.__dataclass_fields__)
+
+
+def load_constraint_config(
+    robot_name: str | None = None,
+    path: str | Path | None = None,
+) -> ConstraintConfig:
+    if path is not None:
+        config_path = Path(path)
+    elif robot_name is not None:
+        normalized_name = ALIASES.get(robot_name, robot_name)
+        config_path = ROBOTS_ROOT / normalized_name / "solver_config.yaml"
+    else:
+        raise ValueError("load_constraint_config requires a robot_name or explicit path.")
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"Solver config not found: {config_path}")
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ImportError("Solver config loading requires PyYAML.") from exc
+
+    with config_path.open("r", encoding="utf-8") as file:
+        data = yaml.safe_load(file) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{config_path} must contain a YAML mapping.")
+
+    missing = [key for key in REQUIRED_CONFIG_KEYS if key not in data]
+    if missing:
+        raise ValueError(
+            f"{config_path} is missing required solver setting(s): "
+            + ", ".join(missing)
+        )
+
+    unknown = sorted(set(data) - set(REQUIRED_CONFIG_KEYS))
+    if unknown:
+        raise ValueError(
+            f"{config_path} contains unknown solver setting(s): "
+            + ", ".join(unknown)
+        )
+
+    values = {key: data[key] for key in REQUIRED_CONFIG_KEYS}
+    return ConstraintConfig(**values)
+
+@dataclass(frozen=True)
+class SolveResult:
+    status: SolveStatus
+    joint_position: list[float]
+    achieved_pose: Pose3D
+    position_error: float
+    orientation_error: float
+    iterations: int
+    message: str
+    notes: list[str]
+    error_history: list[float]
+
+    @property
+    def final_error(self) -> float:
+        return float(np.hypot(self.position_error, self.orientation_error))
+
+
+class IKSolver:
+    def __init__(
+        self,
+        robot_model: RobotModel,
+        config: ConstraintConfig | None = None,
+    ) -> None:
+        self.robot_model = robot_model
+        self.config = config or load_constraint_config(getattr(robot_model, "name", None))
+
+    def solve(
+        self,
+        goal_pose: Pose3D,
+        start_position: Sequence[float],
+        config: ConstraintConfig | None = None,
+    ) -> SolveResult:
+        return solve(
+            self.robot_model,
+            goal_pose,
+            start_position,
+            config=config or self.config,
+        )
+
+
+def solve(
+    robot_model: RobotModel,
+    goal_pose: Pose3D,
+    start_position: Sequence[float],
+    config: ConstraintConfig | None = None,
+) -> SolveResult:
+    config = config or load_constraint_config(getattr(robot_model, "name", None))
+    invalid_message = _validate_inputs(robot_model, goal_pose, start_position, config)
+    if invalid_message is not None:
+        start = _coerce_joints(start_position)
+        achieved_pose = (
+            robot_model.forward_kinematics(start)
+            if len(start) == robot_model.dof
+            else Pose3D(0.0, 0.0, 0.0)
+        )
+        return SolveResult(
+            status=SolveStatus.INVALID_INPUT,
+            joint_position=start,
+            achieved_pose=achieved_pose,
+            position_error=float("inf"),
+            orientation_error=float("inf"),
+            iterations=0,
+            message=invalid_message,
+            notes=[],
+            error_history=[],
+        )
+
+    q_start = np.asarray(start_position, dtype=float)
+    q = q_start.copy()
+    error_history: list[float] = []
+    best_error = float("inf")
+    stagnant_iterations = 0
+
+    for iteration in range(1, config.max_iterations + 1):
+        error = np.asarray(robot_model.pose_error(q, goal_pose), dtype=float)
+        weighted_error = _weighted_error(error, config.orientation_weight)
+        position_error = float(np.linalg.norm(error[:3]))
+        orientation_error = float(np.linalg.norm(error[3:6]))
+        combined_error = float(np.linalg.norm(weighted_error))
+        error_history.append(combined_error)
+
+        if _is_success(position_error, orientation_error, config):
+            return _build_result(
+                SolveStatus.SUCCESS,
+                robot_model,
+                q,
+                goal_pose,
+                position_error,
+                orientation_error,
+                iteration,
+                "solution converged within tolerance",
+                q_start,
+                error_history,
+            )
+
+        if best_error - combined_error <= config.improvement_epsilon:
+            stagnant_iterations += 1
+        else:
+            stagnant_iterations = 0
+            best_error = combined_error
+        if stagnant_iterations >= config.stagnation_iterations:
+            break
+
+        jacobian = np.asarray(robot_model.jacobian(q), dtype=float)
+        weighted_jacobian = jacobian.copy()
+        weighted_jacobian[3:6, :] *= config.orientation_weight
+        lower, upper = _step_bounds(robot_model, q, q_start, config)
+        delta = _solve_qp(
+            weighted_jacobian,
+            weighted_error,
+            config.damping,
+            config.motion_weight,
+            lower,
+            upper,
+            config.qp_solver,
+        )
+        q = np.asarray(robot_model.integrate(q, delta), dtype=float)
+
+    final_error = np.asarray(robot_model.pose_error(q, goal_pose), dtype=float)
+    position_error = float(np.linalg.norm(final_error[:3]))
+    orientation_error = float(np.linalg.norm(final_error[3:6]))
+    status = (
+        SolveStatus.APPROXIMATE
+        if _is_approximate(position_error, orientation_error, config)
+        else SolveStatus.NON_CONVERGENT
+    )
+    return _build_result(
+        status,
+        robot_model,
+        q,
+        goal_pose,
+        position_error,
+        orientation_error,
+        len(error_history),
+        "solution classified after reaching a stopping condition",
+        q_start,
+        error_history,
+    )
+
+
+def _validate_inputs(
+    robot_model: RobotModel,
+    goal_pose: Pose3D,
+    start_position: Sequence[float],
+    config: ConstraintConfig,
+) -> str | None:
+    if not isinstance(goal_pose, Pose3D):
+        return "goal_pose must be a Pose3D instance"
+    if len(start_position) != robot_model.dof:
+        return f"start_position must contain {robot_model.dof} joints"
+    if len(config.max_solution_jump) != robot_model.dof:
+        return f"max_solution_jump must contain {robot_model.dof} values"
+    for index, (joint, limit) in enumerate(zip(start_position, robot_model.joint_limits)):
+        if not np.isfinite(joint):
+            return f"joint {index} is not finite"
+        if joint < limit.lower or joint > limit.upper:
+            return f"joint {index} violates joint limits"
+    return None
+
+
+def _step_bounds(
+    robot_model: RobotModel,
+    q: np.ndarray,
+    q_start: np.ndarray,
+    config: ConstraintConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    joint_lower = np.array([limit.lower for limit in robot_model.joint_limits]) - q
+    joint_upper = np.array([limit.upper for limit in robot_model.joint_limits]) - q
+    step_lower = np.full(robot_model.dof, -config.max_step)
+    step_upper = np.full(robot_model.dof, config.max_step)
+    total_jump = np.asarray(config.max_solution_jump, dtype=float)
+    total_lower = q_start - total_jump - q
+    total_upper = q_start + total_jump - q
+    lower = np.maximum.reduce([joint_lower, step_lower, total_lower])
+    upper = np.minimum.reduce([joint_upper, step_upper, total_upper])
+    return lower, upper
+
+
+def _solve_qp(
+    jacobian: np.ndarray,
+    error: np.ndarray,
+    damping: float,
+    motion_weight: float,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    solver_name: str,
+) -> np.ndarray:
+    dof = jacobian.shape[1]
+    hessian = jacobian.T @ jacobian + (damping + motion_weight) * np.eye(dof)
+    gradient = -(jacobian.T @ error)
+    if solver_name.lower() == "osqp":
+        try:
+            return _solve_with_osqp(hessian, gradient, lower, upper)
+        except Exception:
+            pass
+    unconstrained = -np.linalg.solve(hessian, gradient)
+    return np.clip(unconstrained, lower, upper)
+
+
+def _solve_with_osqp(
+    hessian: np.ndarray,
+    gradient: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+) -> np.ndarray:
+    import osqp
+    from scipy import sparse
+
+    problem = osqp.OSQP()
+    problem.setup(
+        P=sparse.csc_matrix((hessian + hessian.T) / 2.0),
+        q=gradient,
+        A=sparse.eye(hessian.shape[0], format="csc"),
+        l=lower,
+        u=upper,
+        verbose=False,
+        polishing=False,
+    )
+    result = problem.solve()
+    if result.info.status_val not in {1, 2}:
+        raise RuntimeError(f"OSQP failed with status {result.info.status}")
+    return np.asarray(result.x, dtype=float)
+
+
+def _weighted_error(error: np.ndarray, orientation_weight: float) -> np.ndarray:
+    weighted = error.copy()
+    weighted[3:6] *= orientation_weight
+    return weighted
+
+
+def _is_success(
+    position_error: float,
+    orientation_error: float,
+    config: ConstraintConfig,
+) -> bool:
+    return (
+        position_error <= config.position_tolerance
+        and orientation_error <= config.orientation_tolerance
+    )
+
+
+def _is_approximate(
+    position_error: float,
+    orientation_error: float,
+    config: ConstraintConfig,
+) -> bool:
+    return (
+        position_error <= config.approx_position_multiplier * config.position_tolerance
+        and orientation_error
+        <= config.approx_orientation_multiplier * config.orientation_tolerance
+    )
+
+
+def _build_result(
+    status: SolveStatus,
+    robot_model: RobotModel,
+    q: np.ndarray,
+    goal_pose: Pose3D,
+    position_error: float,
+    orientation_error: float,
+    iterations: int,
+    message: str,
+    start_position: np.ndarray,
+    error_history: list[float],
+) -> SolveResult:
+    notes: list[str] = []
+    if status in {SolveStatus.APPROXIMATE, SolveStatus.NON_CONVERGENT}:
+        notes = collect_notes(
+            robot_model,
+            q,
+            start_position,
+            goal_pose,
+            error_history,
+        )
+    return SolveResult(
+        status=status,
+        joint_position=[float(value) for value in q],
+        achieved_pose=robot_model.forward_kinematics(q),
+        position_error=position_error,
+        orientation_error=orientation_error,
+        iterations=iterations,
+        message=message,
+        notes=notes,
+        error_history=list(error_history),
+    )
+
+
+def _coerce_joints(start_position: Sequence[float]) -> list[float]:
+    try:
+        return [float(value) for value in start_position]
+    except TypeError:
+        return []

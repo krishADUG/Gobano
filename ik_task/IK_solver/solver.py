@@ -175,24 +175,24 @@ def solve(
             max_stagnant_count = max(max_stagnant_count, stagnant_count)
         
         position_error = _position_error(best_pose, target_pose)
-    orientation_error = robot_model.orientation_error_norm(best_q, target_pose)
-    return SolveResult(
-        status=_final_status(position_error, orientation_error, config),
-        joint_position=best_q,
-        achieved_pose=best_pose,
-        position_error=position_error,
-        orientation_error=orientation_error,
-        iterations=config.max_iterations,
-        message=_failure_message(
-            robot_model,
-            best_q,
-            q_ref,
-            config,
-            position_error,
-            orientation_error,
-            max_stagnant_count,
-        ),
-    )
+        orientation_error = robot_model.orientation_error_norm(best_q, target_pose)
+        return SolveResult(
+            status=_final_status(position_error, orientation_error, config),
+            joint_position=best_q,
+            achieved_pose=best_pose,
+            position_error=position_error,
+            orientation_error=orientation_error,
+            iterations=config.max_iterations,
+            message=_failure_message(
+                robot_model,
+                best_q,
+                q_ref,
+                config,
+                position_error,
+                orientation_error,
+                max_stagnant_count,
+            ),
+        )
 
 
 
@@ -278,6 +278,28 @@ def _final_status(
     ):
         return SolveStatus.APPROXIMATE
     return SolveStatus.NON_CONVERGENCE
+
+
+def _failure_message(
+    robot_model: RobotModel,
+    joints: Sequence[float],
+    reference_joints: Sequence[float],
+    config: ConstraintConfig,
+    position_error: float,
+    orientation_error: float,
+    max_stagnant_count: int,
+) -> str:
+    return (
+        _joint_limit_reason(robot_model, joints)
+        or _jump_limit_reason(joints, reference_joints, config)
+        or _stagnation_reason(config, max_stagnant_count, position_error, orientation_error)
+        or (
+            f"Solver exhausted max_iterations={config.max_iterations} while remaining "
+            "outside tolerance. Final "
+            f"position error {position_error:.5f} m and orientation error "
+            f"{orientation_error:.5f} rad."
+        )
+    )
 
 
 def _coerce_joints(start_position: Sequence[float]) -> list[float]:

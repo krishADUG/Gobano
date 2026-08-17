@@ -1,0 +1,1266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Joint Limit IK Visualization</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f7f8;
+      color: #172026;
+    }
+    body {
+      margin: 0;
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+    .intro {
+      margin: 0 0 22px;
+      max-width: 940px;
+      color: #596773;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+      max-width: 1180px;
+    }
+    .panel {
+      background: #ffffff;
+      border: 1px solid #dbe1e7;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 1px 2px rgba(16, 24, 32, 0.06);
+    }
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    .meta {
+      margin: 0;
+      color: #5d6874;
+      font-size: 13px;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      margin: 0 0 14px;
+      color: #44515d;
+      font-size: 13px;
+    }
+    .marker {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      margin-right: 6px;
+      border-radius: 50%;
+      vertical-align: -1px;
+    }
+    .joint-plots {
+      display: grid;
+      gap: 10px;
+    }
+    .subsection-title {
+      margin: 18px 0 10px;
+      color: #33414d;
+      font-size: 14px;
+      font-weight: 720;
+    }
+    .joint-row {
+      display: grid;
+      grid-template-columns: minmax(170px, 230px) minmax(360px, 1fr);
+      align-items: stretch;
+      gap: 12px;
+      padding: 8px 10px;
+      border: 1px solid #e7ebef;
+      border-radius: 6px;
+      background: #fbfcfd;
+    }
+    .joint-label {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .joint-label strong {
+      color: #33414d;
+      font-size: 13px;
+    }
+    .joint-label span {
+      color: #65727e;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+    }
+    .valid-band {
+      fill: #edf3f6;
+      stroke: #dce5eb;
+      stroke-width: 1;
+    }
+    .limit-line {
+      stroke: #81909c;
+      stroke-width: 1.5;
+      stroke-dasharray: 5 5;
+    }
+    .axis-line {
+      stroke: #c5ced6;
+      stroke-width: 1;
+    }
+    .scenario-line {
+      fill: none;
+      stroke: #8d98a3;
+      stroke-width: 2;
+      stroke-opacity: 0.58;
+    }
+    .tolerance-line {
+      fill: none;
+      stroke: #47525d;
+      stroke-width: 1.5;
+      stroke-dasharray: 6 5;
+      stroke-opacity: 0.72;
+    }
+    .approximate-line {
+      fill: none;
+      stroke: #d08a00;
+      stroke-width: 1.5;
+      stroke-dasharray: 8 4;
+      stroke-opacity: 0.72;
+    }
+    .tolerance-dot {
+      fill: #ffffff;
+      stroke: #47525d;
+      stroke-width: 1.4;
+    }
+    .approximate-dot {
+      fill: #ffffff;
+      stroke: #d08a00;
+      stroke-width: 1.4;
+    }
+    .limit-text {
+      fill: #687581;
+      font-size: 11px;
+    }
+    .scenario-label {
+      fill: #596673;
+      font-size: 10px;
+    }
+    .state-dot {
+      stroke: #ffffff;
+      stroke-width: 2;
+    }
+    .reachable, .reachable .state-stem {
+      color: #126a7a;
+      stroke: #126a7a;
+      fill: #126a7a;
+      background: #126a7a;
+    }
+    .joint_limit, .joint_limit .state-stem {
+      color: #d08a00;
+      stroke: #d08a00;
+      fill: #d08a00;
+      background: #d08a00;
+    }
+    .jump_limit, .jump_limit .state-stem {
+      color: #9a5bce;
+      stroke: #9a5bce;
+      fill: #9a5bce;
+      background: #9a5bce;
+    }
+    .solver_stuck, .solver_stuck .state-stem {
+      color: #6d7781;
+      stroke: #6d7781;
+      fill: #6d7781;
+      background: #6d7781;
+    }
+    .outside_workspace, .outside_workspace .state-stem {
+      color: #c83f49;
+      stroke: #c83f49;
+      fill: #c83f49;
+      background: #c83f49;
+    }
+    @media (max-width: 760px) {
+      body {
+        padding: 18px;
+      }
+      .joint-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1> IK Visualization</h1>
+  <p class="intro">Each row shows one robot joint. The gray bar is the joint limit range, and colored markers show solved joint values.</p>
+  <main class="grid">
+    
+    <section class="panel">
+      <div class="panel-header">
+        <h2>franka_panda</h2>
+        <p class="meta">7 joints · values in radians</p>
+      </div>
+      <div class="legend"><span><i class="marker legend-marker reachable"></i>reachable from home · 1 iter</span>
+<span><i class="marker legend-marker joint_limit"></i>joint-limit blocked target · 200 iter</span>
+<span><i class="marker legend-marker jump_limit"></i>jump-limit blocked target · 200 iter</span>
+<span><i class="marker legend-marker solver_stuck"></i>solver progress limited · 50 iter</span>
+<span><i class="marker legend-marker outside_workspace"></i>outside workspace · 0 iter</span></div>
+      <div class="joint-plots">
+        
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J1</strong>
+          <span>panda_joint1</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="panda_joint1 joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+2.90</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-2.90</text>
+          <polyline class="scenario-line" points="58.00,72.02 226.00,73.00 394.00,66.93 562.00,53.54 730.00,73.00" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="72.02" r="6">
+          <title>reachable from home: +0.0518 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="73.00" r="6">
+          <title>joint-limit blocked target: +0.0000 rad (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="66.93" r="6">
+          <title>jump-limit blocked target: +0.3200 rad (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="53.54" r="6">
+          <title>solver progress limited: +1.0252 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="73.00" r="6">
+          <title>outside workspace: +0.0000 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J2</strong>
+          <span>panda_joint2</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="panda_joint2 joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+1.76</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-1.76</text>
+          <polyline class="scenario-line" points="58.00,98.77 226.00,99.57 394.00,108.74 562.00,80.87 730.00,97.50" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="98.77" r="6">
+          <title>reachable from home: -0.8258 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="99.57" r="6">
+          <title>joint-limit blocked target: -0.8517 rad (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="108.74" r="6">
+          <title>jump-limit blocked target: -1.1454 rad (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="80.87" r="6">
+          <title>solver progress limited: -0.2521 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="97.50" r="6">
+          <title>outside workspace: -0.7854 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J3</strong>
+          <span>panda_joint3</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="panda_joint3 joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+2.90</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-2.90</text>
+          <polyline class="scenario-line" points="58.00,71.74 226.00,73.00 394.00,65.79 562.00,70.77 730.00,73.00" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="71.74" r="6">
+          <title>reachable from home: +0.0666 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="73.00" r="6">
+          <title>joint-limit blocked target: -0.0000 rad (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="65.79" r="6">
+          <title>jump-limit blocked target: +0.3800 rad (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="70.77" r="6">
+          <title>solver progress limited: +0.1173 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="73.00" r="6">
+          <title>outside workspace: +0.0000 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J4</strong>
+          <span>panda_joint4</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="panda_joint4 joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">-0.07</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-3.07</text>
+          <polyline class="scenario-line" points="58.00,100.59 226.00,18.00 394.00,79.79 562.00,40.52 730.00,101.78" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="100.59" r="6">
+          <title>reachable from home: -2.3238 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="18.00" r="6">
+          <title>joint-limit blocked target: -0.0698 rad (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="79.79" r="6">
+          <title>jump-limit blocked target: -1.7562 rad (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="40.52" r="6">
+          <title>solver progress limited: -0.6844 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="101.78" r="6">
+          <title>outside workspace: -2.3562 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J5</strong>
+          <span>panda_joint5</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="panda_joint5 joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+2.90</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-2.90</text>
+          <polyline class="scenario-line" points="58.00,73.08 226.00,73.00 394.00,65.03 562.00,20.72 730.00,73.00" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="73.08" r="6">
+          <title>reachable from home: -0.0044 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="73.00" r="6">
+          <title>joint-limit blocked target: +0.0000 rad (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="65.03" r="6">
+          <title>jump-limit blocked target: +0.4200 rad (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="20.72" r="6">
+          <title>solver progress limited: +2.7541 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="73.00" r="6">
+          <title>outside workspace: +0.0000 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J6</strong>
+          <span>panda_joint6</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="panda_joint6 joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+3.75</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-0.02</text>
+          <polyline class="scenario-line" points="58.00,81.09 226.00,80.21 394.00,94.50 562.00,18.03 730.00,81.66" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="81.09" r="6">
+          <title>reachable from home: +1.5904 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="80.21" r="6">
+          <title>joint-limit blocked target: +1.6205 rad (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="94.50" r="6">
+          <title>jump-limit blocked target: +1.1308 rad (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="18.03" r="6">
+          <title>solver progress limited: +3.7516 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="81.66" r="6">
+          <title>outside workspace: +1.5708 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J7</strong>
+          <span>panda_joint7</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="panda_joint7 joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+2.90</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-2.90</text>
+          <polyline class="scenario-line" points="58.00,58.40 226.00,58.09 394.00,60.20 562.00,114.56 730.00,58.09" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="58.40" r="6">
+          <title>reachable from home: +0.7694 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="58.09" r="6">
+          <title>joint-limit blocked target: +0.7854 rad (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="60.20" r="6">
+          <title>jump-limit blocked target: +0.6741 rad (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="114.56" r="6">
+          <title>solver progress limited: -2.1892 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="58.09" r="6">
+          <title>outside workspace: +0.7854 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+      </div>
+      
+      <div class="subsection-title">Error vs tolerance</div>
+      <div class="joint-plots">
+        
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>Position error</strong>
+          <span>computed error / allowed tolerance (m)</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="Position error tolerance plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">0.66</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">0</text>
+          <polyline class="approximate-line" points="58.00,126.34 226.00,126.34 394.00,126.34 562.00,126.34 730.00,126.34" />
+          <polyline class="tolerance-line" points="58.00,127.67 226.00,127.67 394.00,127.67 562.00,127.67 730.00,127.67" />
+          <polyline class="scenario-line" points="58.00,127.85 226.00,126.46 394.00,48.75 562.00,106.27 730.00,32.35" />
+          <circle class="approximate-dot" cx="58.00" cy="126.34" r="3"><title>reachable from home approximate threshold: 0.01 m</title></circle>
+<circle class="approximate-dot" cx="226.00" cy="126.34" r="3"><title>joint-limit blocked target approximate threshold: 0.01 m</title></circle>
+<circle class="approximate-dot" cx="394.00" cy="126.34" r="3"><title>jump-limit blocked target approximate threshold: 0.01 m</title></circle>
+<circle class="approximate-dot" cx="562.00" cy="126.34" r="3"><title>solver progress limited approximate threshold: 0.01 m</title></circle>
+<circle class="approximate-dot" cx="730.00" cy="126.34" r="3"><title>outside workspace approximate threshold: 0.01 m</title></circle>
+          <circle class="tolerance-dot" cx="58.00" cy="127.67" r="3"><title>reachable from home success tolerance: 0.002 m</title></circle>
+<circle class="tolerance-dot" cx="226.00" cy="127.67" r="3"><title>joint-limit blocked target success tolerance: 0.002 m</title></circle>
+<circle class="tolerance-dot" cx="394.00" cy="127.67" r="3"><title>jump-limit blocked target success tolerance: 0.002 m</title></circle>
+<circle class="tolerance-dot" cx="562.00" cy="127.67" r="3"><title>solver progress limited success tolerance: 0.002 m</title></circle>
+<circle class="tolerance-dot" cx="730.00" cy="127.67" r="3"><title>outside workspace success tolerance: 0.002 m</title></circle>
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="127.85" r="6">
+          <title>reachable from home: error 0.00087123 m, success tolerance 0.002 m, approximate threshold 0.01 m (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="126.46" r="6">
+          <title>joint-limit blocked target: error 0.0092816 m, success tolerance 0.002 m, approximate threshold 0.01 m (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="48.75" r="6">
+          <title>jump-limit blocked target: error 0.47613 m, success tolerance 0.002 m, approximate threshold 0.01 m (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="106.27" r="6">
+          <title>solver progress limited: error 0.13059 m, success tolerance 0.002 m, approximate threshold 0.01 m (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="32.35" r="6">
+          <title>outside workspace: error 0.57471 m, success tolerance 0.002 m, approximate threshold 0.01 m (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+        
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>Orientation error</strong>
+          <span>computed error / allowed tolerance (rad)</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="Orientation error tolerance plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">0.19</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">0</text>
+          <polyline class="approximate-line" points="58.00,113.48 226.00,113.48 394.00,113.48 562.00,113.48 730.00,113.48" />
+          <polyline class="tolerance-line" points="58.00,125.10 226.00,125.10 394.00,125.10 562.00,125.10 730.00,125.10" />
+          <polyline class="scenario-line" points="58.00,126.74 226.00,125.72 394.00,32.35 562.00,60.39 730.00,128.00" />
+          <circle class="approximate-dot" cx="58.00" cy="113.48" r="3"><title>reachable from home approximate threshold: 0.025 rad</title></circle>
+<circle class="approximate-dot" cx="226.00" cy="113.48" r="3"><title>joint-limit blocked target approximate threshold: 0.025 rad</title></circle>
+<circle class="approximate-dot" cx="394.00" cy="113.48" r="3"><title>jump-limit blocked target approximate threshold: 0.025 rad</title></circle>
+<circle class="approximate-dot" cx="562.00" cy="113.48" r="3"><title>solver progress limited approximate threshold: 0.025 rad</title></circle>
+<circle class="approximate-dot" cx="730.00" cy="113.48" r="3"><title>outside workspace approximate threshold: 0.025 rad</title></circle>
+          <circle class="tolerance-dot" cx="58.00" cy="125.10" r="3"><title>reachable from home success tolerance: 0.005 rad</title></circle>
+<circle class="tolerance-dot" cx="226.00" cy="125.10" r="3"><title>joint-limit blocked target success tolerance: 0.005 rad</title></circle>
+<circle class="tolerance-dot" cx="394.00" cy="125.10" r="3"><title>jump-limit blocked target success tolerance: 0.005 rad</title></circle>
+<circle class="tolerance-dot" cx="562.00" cy="125.10" r="3"><title>solver progress limited success tolerance: 0.005 rad</title></circle>
+<circle class="tolerance-dot" cx="730.00" cy="125.10" r="3"><title>outside workspace success tolerance: 0.005 rad</title></circle>
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="126.74" r="6">
+          <title>reachable from home: error 0.0021636 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="125.72" r="6">
+          <title>joint-limit blocked target: error 0.0039261 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (approximate, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="32.35" r="6">
+          <title>jump-limit blocked target: error 0.1647 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (non_convergence, 200 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="60.39" r="6">
+          <title>solver progress limited: error 0.11641 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="128.00" r="6">
+          <title>outside workspace: error 4.1471e-16 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+      </div>
+    
+    </section>
+    
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>ur5</h2>
+        <p class="meta">6 joints · values in radians</p>
+      </div>
+      <div class="legend"><span><i class="marker legend-marker reachable"></i>reachable from home · 1 iter</span>
+<span><i class="marker legend-marker joint_limit"></i>joint-limit blocked target · 50 iter</span>
+<span><i class="marker legend-marker jump_limit"></i>jump-limit blocked target · 50 iter</span>
+<span><i class="marker legend-marker solver_stuck"></i>solver progress limited · 50 iter</span>
+<span><i class="marker legend-marker outside_workspace"></i>outside workspace · 0 iter</span></div>
+      <div class="joint-plots">
+        
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J1</strong>
+          <span>shoulder_pan_joint</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="shoulder_pan_joint joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+6.28</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-6.28</text>
+          <polyline class="scenario-line" points="58.00,72.32 226.00,72.96 394.00,70.20 562.00,67.86 730.00,73.00" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="72.32" r="6">
+          <title>reachable from home: +0.0779 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="72.96" r="6">
+          <title>joint-limit blocked target: +0.0047 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="70.20" r="6">
+          <title>jump-limit blocked target: +0.3200 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="67.86" r="6">
+          <title>solver progress limited: +0.5873 rad (approximate, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="73.00" r="6">
+          <title>outside workspace: +0.0000 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J2</strong>
+          <span>shoulder_lift_joint</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="shoulder_lift_joint joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+6.28</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-6.28</text>
+          <polyline class="scenario-line" points="58.00,87.11 226.00,18.00 394.00,89.90 562.00,105.18 730.00,86.75" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="87.11" r="6">
+          <title>reachable from home: -1.6115 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="18.00" r="6">
+          <title>joint-limit blocked target: +6.2832 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="89.90" r="6">
+          <title>jump-limit blocked target: -1.9308 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="105.18" r="6">
+          <title>solver progress limited: -3.6764 rad (approximate, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="86.75" r="6">
+          <title>outside workspace: -1.5708 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J3</strong>
+          <span>elbow_joint</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="elbow_joint joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+6.28</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-6.28</text>
+          <polyline class="scenario-line" points="58.00,58.80 226.00,58.25 394.00,58.51 562.00,47.55 730.00,59.25" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="58.80" r="6">
+          <title>reachable from home: +1.6228 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="58.25" r="6">
+          <title>joint-limit blocked target: +1.6854 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="58.51" r="6">
+          <title>jump-limit blocked target: +1.6557 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="47.55" r="6">
+          <title>solver progress limited: +2.9069 rad (approximate, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="59.25" r="6">
+          <title>outside workspace: +1.5708 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J4</strong>
+          <span>wrist_1_joint</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="wrist_1_joint joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+6.28</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-6.28</text>
+          <polyline class="scenario-line" points="58.00,86.51 226.00,86.84 394.00,90.25 562.00,64.78 730.00,86.75" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="86.51" r="6">
+          <title>reachable from home: -1.5431 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="86.84" r="6">
+          <title>joint-limit blocked target: -1.5815 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="90.25" r="6">
+          <title>jump-limit blocked target: -1.9708 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="64.78" r="6">
+          <title>solver progress limited: +0.9391 rad (approximate, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="86.75" r="6">
+          <title>outside workspace: -1.5708 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J5</strong>
+          <span>wrist_2_joint</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="wrist_2_joint joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+6.28</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-6.28</text>
+          <polyline class="scenario-line" points="58.00,86.94 226.00,86.71 394.00,83.07 562.00,72.09 730.00,86.75" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="86.94" r="6">
+          <title>reachable from home: -1.5926 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="86.71" r="6">
+          <title>joint-limit blocked target: -1.5667 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="83.07" r="6">
+          <title>jump-limit blocked target: -1.1508 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="72.09" r="6">
+          <title>solver progress limited: +0.1041 rad (approximate, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="86.75" r="6">
+          <title>outside workspace: -1.5708 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>J6</strong>
+          <span>wrist_3_joint</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="wrist_3_joint joint limit plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="limit-line upper" x1="58" y1="18" x2="730" y2="18" />
+          <line class="limit-line lower" x1="58" y1="128" x2="730" y2="128" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">+6.28</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">-6.28</text>
+          <polyline class="scenario-line" points="58.00,72.85 226.00,73.00 394.00,76.85 562.00,97.99 730.00,73.00" />
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="72.85" r="6">
+          <title>reachable from home: +0.0175 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="73.00" r="6">
+          <title>joint-limit blocked target: -0.0005 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="76.85" r="6">
+          <title>jump-limit blocked target: -0.4400 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="97.99" r="6">
+          <title>solver progress limited: -2.8544 rad (approximate, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="73.00" r="6">
+          <title>outside workspace: +0.0000 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+      </div>
+      
+      <div class="subsection-title">Error vs tolerance</div>
+      <div class="joint-plots">
+        
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>Position error</strong>
+          <span>computed error / allowed tolerance (m)</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="Position error tolerance plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">0.51</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">0</text>
+          <polyline class="approximate-line" points="58.00,125.83 226.00,125.83 394.00,125.83 562.00,125.83 730.00,125.83" />
+          <polyline class="tolerance-line" points="58.00,127.57 226.00,127.57 394.00,127.57 562.00,127.57 730.00,127.57" />
+          <polyline class="scenario-line" points="58.00,127.74 226.00,117.23 394.00,68.35 562.00,126.25 730.00,32.35" />
+          <circle class="approximate-dot" cx="58.00" cy="125.83" r="3"><title>reachable from home approximate threshold: 0.01 m</title></circle>
+<circle class="approximate-dot" cx="226.00" cy="125.83" r="3"><title>joint-limit blocked target approximate threshold: 0.01 m</title></circle>
+<circle class="approximate-dot" cx="394.00" cy="125.83" r="3"><title>jump-limit blocked target approximate threshold: 0.01 m</title></circle>
+<circle class="approximate-dot" cx="562.00" cy="125.83" r="3"><title>solver progress limited approximate threshold: 0.01 m</title></circle>
+<circle class="approximate-dot" cx="730.00" cy="125.83" r="3"><title>outside workspace approximate threshold: 0.01 m</title></circle>
+          <circle class="tolerance-dot" cx="58.00" cy="127.57" r="3"><title>reachable from home success tolerance: 0.002 m</title></circle>
+<circle class="tolerance-dot" cx="226.00" cy="127.57" r="3"><title>joint-limit blocked target success tolerance: 0.002 m</title></circle>
+<circle class="tolerance-dot" cx="394.00" cy="127.57" r="3"><title>jump-limit blocked target success tolerance: 0.002 m</title></circle>
+<circle class="tolerance-dot" cx="562.00" cy="127.57" r="3"><title>solver progress limited success tolerance: 0.002 m</title></circle>
+<circle class="tolerance-dot" cx="730.00" cy="127.57" r="3"><title>outside workspace success tolerance: 0.002 m</title></circle>
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="127.74" r="6">
+          <title>reachable from home: error 0.0011921 m, success tolerance 0.002 m, approximate threshold 0.01 m (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="117.23" r="6">
+          <title>joint-limit blocked target: error 0.049538 m, success tolerance 0.002 m, approximate threshold 0.01 m (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="68.35" r="6">
+          <title>jump-limit blocked target: error 0.27443 m, success tolerance 0.002 m, approximate threshold 0.01 m (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="126.25" r="6">
+          <title>solver progress limited: error 0.0080629 m, success tolerance 0.002 m, approximate threshold 0.01 m (approximate, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="32.35" r="6">
+          <title>outside workspace: error 0.44009 m, success tolerance 0.002 m, approximate threshold 0.01 m (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+        
+      <div class="joint-row">
+        <div class="joint-label">
+          <strong>Orientation error</strong>
+          <span>computed error / allowed tolerance (rad)</span>
+        </div>
+        <svg viewBox="0 0 760 170" role="img" aria-label="Orientation error tolerance plot">
+          <rect class="valid-band" x="58" y="18" width="672" height="110" />
+          <line class="axis-line" x1="58" y1="128" x2="730" y2="128" />
+          <text class="limit-text" x="8" y="22" text-anchor="start">0.96</text>
+          <text class="limit-text" x="8" y="132" text-anchor="start">0</text>
+          <polyline class="approximate-line" points="58.00,125.15 226.00,125.15 394.00,125.15 562.00,125.15 730.00,125.15" />
+          <polyline class="tolerance-line" points="58.00,127.43 226.00,127.43 394.00,127.43 562.00,127.43 730.00,127.43" />
+          <polyline class="scenario-line" points="58.00,127.76 226.00,126.16 394.00,32.35 562.00,127.03 730.00,128.00" />
+          <circle class="approximate-dot" cx="58.00" cy="125.15" r="3"><title>reachable from home approximate threshold: 0.025 rad</title></circle>
+<circle class="approximate-dot" cx="226.00" cy="125.15" r="3"><title>joint-limit blocked target approximate threshold: 0.025 rad</title></circle>
+<circle class="approximate-dot" cx="394.00" cy="125.15" r="3"><title>jump-limit blocked target approximate threshold: 0.025 rad</title></circle>
+<circle class="approximate-dot" cx="562.00" cy="125.15" r="3"><title>solver progress limited approximate threshold: 0.025 rad</title></circle>
+<circle class="approximate-dot" cx="730.00" cy="125.15" r="3"><title>outside workspace approximate threshold: 0.025 rad</title></circle>
+          <circle class="tolerance-dot" cx="58.00" cy="127.43" r="3"><title>reachable from home success tolerance: 0.005 rad</title></circle>
+<circle class="tolerance-dot" cx="226.00" cy="127.43" r="3"><title>joint-limit blocked target success tolerance: 0.005 rad</title></circle>
+<circle class="tolerance-dot" cx="394.00" cy="127.43" r="3"><title>jump-limit blocked target success tolerance: 0.005 rad</title></circle>
+<circle class="tolerance-dot" cx="562.00" cy="127.43" r="3"><title>solver progress limited success tolerance: 0.005 rad</title></circle>
+<circle class="tolerance-dot" cx="730.00" cy="127.43" r="3"><title>outside workspace success tolerance: 0.005 rad</title></circle>
+          
+      <g class="state reachable">
+        <circle class="state-dot" cx="58.00" cy="127.76" r="6">
+          <title>reachable from home: error 0.0020769 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (success, 1 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state joint_limit">
+        <circle class="state-dot" cx="226.00" cy="126.16" r="6">
+          <title>joint-limit blocked target: error 0.016111 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state jump_limit">
+        <circle class="state-dot" cx="394.00" cy="32.35" r="6">
+          <title>jump-limit blocked target: error 0.83834 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (non_convergence, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state solver_stuck">
+        <circle class="state-dot" cx="562.00" cy="127.03" r="6">
+          <title>solver progress limited: error 0.0084799 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (approximate, 50 iterations)</title>
+        </circle>
+      </g>
+    
+
+      <g class="state outside_workspace">
+        <circle class="state-dot" cx="730.00" cy="128.00" r="6">
+          <title>outside workspace: error 3.8348e-17 rad, success tolerance 0.005 rad, approximate threshold 0.025 rad (non_convergence, 0 iterations)</title>
+        </circle>
+      </g>
+    
+          <text class="scenario-label" x="58.00" y="156" text-anchor="middle">reach</text>
+<text class="scenario-label" x="226.00" y="156" text-anchor="middle">limit</text>
+<text class="scenario-label" x="394.00" y="156" text-anchor="middle">jump</text>
+<text class="scenario-label" x="562.00" y="156" text-anchor="middle">stuck</text>
+<text class="scenario-label" x="730.00" y="156" text-anchor="middle">outside</text>
+        </svg>
+      </div>
+    
+      </div>
+    
+    </section>
+    
+  </main>
+</body>
+</html>

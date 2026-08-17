@@ -10,14 +10,22 @@ Requires Python 3.11+.
 pip install -r requirements.txt
 python3 demo.py
 python3 demo.py trace=true # to get traces of all the interations
+python3 demo.py --scenario custom --trace true # to select custom scene with traces
 
 python3 visualize.py 
-python3 visualize_meshcat.py --robot franka_panda --scenario all --trace true --open 
-python3 visualize_meshcat.py --robot ur5 --scenario all --trace true --open
+
+python3 visualize_meshcat.py --robot franka_panda --scene standard --trace true --open 
+python3 visualize_meshcat.py --robot ur5 --scene standard --trace true --open
+python3 visualize_meshcat.py --robot all --scene custom --trace true --open
+
 python3 -m unittest
 ```
 
-`visualize.py` writes `ik_visualization.html`, which can be opened directly in a browser. `visualize_meshcat.py` starts an interactive Meshcat 3D viewer. Use `--trace true` or `trace=true` in `demo.py` to collect iteration traces. In Meshcat, `--trace true` draws translucent intermediate robot poses for every collected IK iteration.
+`visualize.py` writes `ik_visualization.html`, which can be opened directly in a browser. `visualize_meshcat.py` starts an interactive Meshcat 3D viewer. 
+
+Use `--trace true` or `trace=true` and `--scenario standard` or `--scenario custom`in `demo.py` to collect iteration traces and choose standard 5 scenes ir custome scene. 
+
+In Meshcat, use `--robot ur5`, `--robot franka_panda`, or `--robot all`; use `--scene standard` or `--scene custom`; and use `--trace true` or `--trace false`. Trace draws translucent intermediate robot poses for every collected IK iteration.I
 
 ## Robot Folder Contract
 
@@ -103,7 +111,9 @@ Each IK iteration solves a box-constrained differential QP: as shown in the OCP.
 
 ## Custom scene
 
-in the scenario file, you can edit your own custome scenario in the lines 70-85, to define a custome start and goal point, with custom solver configs.
+In the `scenario.py` file, you can edit your own custom scenario in the lines 70-85, to define a custome start and goal point, with custom solver configs.That scene is built by `build_custom_scenario(robot)`: it defines a custom start joint configuration, builds the Cartesian goal from a custom goal joint configuration, and applies per-scene solver overrides through `scenario_constraints(config, scenario)`. The standard scene mode lays out the standard test scenarios from `build_scenarios(robot)`.
 
+
+`visualize_meshcat.py` can also show a separate custom scene with `--scene custom`. 
 These can be visualized in meshcat using teh command 
 python3 visualize_meshcat.py --scenario custom --trace true --open

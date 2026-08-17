@@ -4,9 +4,11 @@ import argparse
 
 from IK_solver import (
     available_robot_names,
+    build_custom_scenario,
     build_scenarios,
     load_constraint_config,
     load_robot_model,
+    Scenario,
     scenario_constraints,
     solve,
 )
@@ -14,6 +16,12 @@ from IK_solver import (
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run IK solver scenarios for every robot.")
+    parser.add_argument(
+            "--scenario",
+            choices=["standard", "custom"],
+            default="standard",
+            help="Scenarios to run: standard five or custom only.",
+        )
     parser.add_argument(
         "--trace",
         type=_parse_bool,
@@ -81,6 +89,14 @@ def main() -> None:
             if collect_trace:
                 print(f"    trace states: {len(result.trace)}")
             print(f"    note: {result.message}")
+
+
+def _demo_scenarios(robot, scenario_mode: str) -> list[Scenario]:
+    if scenario_mode == "standard":
+        return build_scenarios(robot)
+    if scenario_mode == "custom":
+        return [build_custom_scenario(robot)]
+    raise ValueError(f"Unknown scenario mode: {scenario_mode}")
 
 
 def _trace_enabled(flag_value: bool, trace_setting: str | None) -> bool:

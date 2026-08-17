@@ -52,14 +52,15 @@ def main() -> None:
         help="Ask Meshcat to open the viewer URL in your browser.",
     )
     parser.add_argument(
+        "--scene",
         "--scenario",
-        choices=["reachable", "joint_limit", "jump_limit", "stuck", "outside", "custom", "all"],
-        default="reachable",
-        help="Scenario to show. Use 'all' to lay out the standard test scenarios.",
+        choices=["standard", "custom"],
+        default="standard",
+        help="Scene set to show: standard five or custom only.",
     )
     parser.add_argument(
         "--workspace",
-        choices=["wire", "glass", "hidden"],
+        choices=["wire", "hidden"],
         default="wire",
         help="Workspace sphere style. 'wire' is easiest to see through.",
     )
@@ -96,7 +97,6 @@ def main() -> None:
     for robot_index, robot_name in enumerate(robot_names):
         robot = load_robot_model(robot_name)
         config = load_constraint_config(robot.name)
-        #scenarios = _select_scenarios(build_scenarios(robot), args.scenario)
         scenarios = _meshcat_scenarios(robot, args.scenario)
         for scenario_index, scenario in enumerate(scenarios):
             result = solve(
@@ -150,24 +150,12 @@ def main() -> None:
         pass
 
 
-def _meshcat_scenarios(robot, scenario_name: str) -> list[Scenario]:
-    if scenario_name == "custom":
+def _meshcat_scenarios(robot, scene_mode: str) -> list[Scenario]:
+    if scene_mode == "custom":
         return [build_custom_scenario(robot)]
-    return _select_scenarios(build_scenarios(robot), scenario_name)
-
-
-def _select_scenarios(scenarios: list[Scenario], scenario_name: str) -> list[Scenario]:
-    if scenario_name == "all":
-        return scenarios
-    labels = {
-        "reachable": "reachable from home",
-        "joint_limit": "joint-limit blocked target",
-        "jump_limit": "jump-limit blocked target",
-        "stuck": "solver progress limited",
-        "outside": "outside workspace",
-    }
-    selected_label = labels[scenario_name]
-    return [scenario for scenario in scenarios if scenario.label == selected_label]
+    if scene_mode == "custom":
+        return [build_custom_scenario(robot)]
+    raise ValueError(f"Unknown scene mode: {scene_mode}")
 
 
 def _scene_offset(scenario_index: int, scenario_count: int, robot_index: int) -> np.ndarray:
@@ -297,6 +285,16 @@ def _label_image(lines: list[str], status_color: int) -> tuple[bytes, int, int]:
     return buffer.getvalue(), width, height
 
 
+def _draw_label_background(draw, width: int, height: int, status_color: int) -> None:
+    bounds = (1, 1, width - 2, height - 2)
+    fill = (255, 255, 255, 232)
+    outline = _rgb_tuple(status_color) + (255,)
+    if hasattr(draw, "rounded_rectangle"):
+        draw.rounded_rectangle(bounds, radius=12, fill=fill, outline=outline, width=3)
+    else:
+        draw.rectangle(bounds, fill=fill, outline=outline, width=3)
+
+        
 def _label_font():
     from PIL import ImageFont
 

@@ -456,3 +456,62 @@ def _qp_step(
     robot_model: RobotModel,
     config: ConstraintConfig,
 ):
+    dof = len(q)
+    regularization = (config.damping * config.damping) + config.motion_weight
+    hessian = jacobian.T @ jacobian + regularization * np.eye(dof)
+    gradient = -jacobian.T @ error_vector + config.motion_weight * (
+        np.asarray(q, dtype=float) - np.asarray(q_ref, dtype=float)
+    )
+    lower = []
+    upper = []
+    for joint, reference, limit, jump_limit in zip(
+        q,
+        q_ref,
+        robot_model.joint_limits,
+        config.max_solution_jump,
+    ):
+        lower.append(
+            max(
+                -config.max_step,
+                limit.lower - joint,
+                reference - jump_limit - joint,
+            )
+        )
+        upper.append(
+            min(
+                config.max_step,
+                limit.upper - joint,
+                reference + jump_limit - joint,
+            )
+        )
+
+    lower_bounds = np.asarray(lower, dtype=float)
+    upper_bounds = np.asarray(upper, dtype=float)
+    try:
+        from qpsolvers import solve_qp
+
+        try:
+            from scipy import sparse
+
+            qp_hessian = sparse.csc_matrix(0.5 * (hessian + hessian.T))
+        except ImportError:
+            qp_hessian = 0.5 * (hessian + hessian.T)
+
+        step = solve_qp(
+            P=qp_hessian,
+            q=gradient,
+            lb=lower_bounds,
+            ub=upper_bounds,
+            solver=config.qp_solver,
+        )
+        if step is not None and np.all(np.isfinite(step)):
+            return np.asarray(step, dtype=float)
+    except Exception:
+        pass
+
+    try:
+        step = -np.linalg.solve(hessian, gradient)
+    except np.linalg.LinAlgError:
+        step = -np.linalg.pinv(hessian) @ gradient
+    return np.clip(step, lower_bounds, upper_bounds)
+

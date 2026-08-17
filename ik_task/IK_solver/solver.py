@@ -107,9 +107,7 @@ def solve(
             position_error=float("inf"),
             orientation_error=float("inf"),
             iterations=0,
-            message=invalid_message,
-            notes=[],
-            error_history=[],
+            message=invalid_reason,
         )
 
     q_start = np.asarray(start_position, dtype=float)
@@ -183,26 +181,6 @@ def solve(
         q_start,
         error_history,
     )
-
-
-def _validate_inputs(
-    robot_model: RobotModel,
-    goal_pose: Pose3D,
-    start_position: Sequence[float],
-    config: ConstraintConfig,
-) -> str | None:
-    if not isinstance(goal_pose, Pose3D):
-        return "goal_pose must be a Pose3D instance"
-    if len(start_position) != robot_model.dof:
-        return f"start_position must contain {robot_model.dof} joints"
-    if len(config.max_solution_jump) != robot_model.dof:
-        return f"max_solution_jump must contain {robot_model.dof} values"
-    for index, (joint, limit) in enumerate(zip(start_position, robot_model.joint_limits)):
-        if not np.isfinite(joint):
-            return f"joint {index} is not finite"
-        if joint < limit.lower or joint > limit.upper:
-            return f"joint {index} violates joint limits"
-    return None
 
 
 def _step_bounds(
@@ -345,3 +323,48 @@ def _fallback_pose(robot_model: RobotModel, joints: Sequence[float]) -> Pose3D:
     except Exception:
         pass
     return Pose3D(0.0, 0.0, 0.0)
+
+
+def _validate_inputs(
+    robot_model: RobotModel,
+    target_pose: Pose3D,
+    current_joint_position: Sequence[float],
+    config: ConstraintConfig,
+) -> str | None:
+    if not isinstance(target_pose, Pose3D):
+        return "target_pose must be a Pose3D."
+    if len(current_joint_position) != robot_model.dof:
+        return f"Expected {robot_model.dof} joints, got {len(current_joint_position)}."
+    required_methods = ("pose_error", "orientation_error_norm", "integrate")
+    missing = [name for name in required_methods if not hasattr(robot_model, name)]
+    if missing:
+        return "IK requires a Pinocchio-style robot model with " + ", ".join(missing) + "."
+    values = [
+        target_pose.x,
+        target_pose.y,
+        target_pose.z,
+        target_pose.roll,
+        target_pose.pitch,
+        target_pose.yaw,
+        *current_joint_position,
+    ]
+    if not all(isfinite(value) for value in values):
+        return "Inputs must be finite numbers."
+    if config.max_iterations <= 0:
+        return "max_iterations must be positive."
+    if config.position_tolerance < 0 or config.orientation_tolerance < 0:
+        return "Tolerances must be non-negative."
+    if config.approx_position_multiplier < 1.0 or config.approx_orientation_multiplier < 1.0:
+        return "Approximate tolerance multipliers must be at least 1.0."
+    if config.damping <= 0 or config.max_step <= 0:
+        return "damping and max_step must be positive."
+    if len(config.max_solution_jump) != robot_model.dof:
+        return (
+            f"max_solution_jump must contain {robot_model.dof} values, "
+            f"got {len(config.max_solution_jump)}."
+        )
+    if not all(isfinite(value) and value > 0.0 for value in config.max_solution_jump):
+        return "max_solution_jump values must be finite positive numbers."
+    return None
+
+

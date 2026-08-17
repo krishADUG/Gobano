@@ -157,128 +157,49 @@ def solve(
         weighted_error = error * weights
         dq = _qp_step(weighted_jacobian, weighted_error, q, q_ref, robot_model, config)
 
+        if float(np.max(np.abs(dq))) < 1e-12:
+            stagnant_count += 1
+            max_stagnant_count = max(max_stagnant_count, stagnant_count)
+            continue
 
-        if _is_success(position_error, orientation_error, config):
-            return _build_result(
-                SolveStatus.SUCCESS,
-                robot_model,
-                q,
-                goal_pose,
-                position_error,
-                orientation_error,
-                iteration,
-                "solution converged within tolerance",
-                q_start,
-                error_history,
-            )
+        q = robot_model.integrate(q, dq)
 
-        if best_error - combined_error <= config.improvement_epsilon:
-            stagnant_iterations += 1
+        cost = _spatial_cost(robot_model, target_pose, q, q_ref, config)
+        if cost + config.improvement_epsilon < best_cost:
+            best_cost = cost
+            best_q = list(q)
+            best_pose = pose
+            stagnant_count = 0
         else:
-            stagnant_iterations = 0
-            best_error = combined_error
-        if stagnant_iterations >= config.stagnation_iterations:
-            break
-
-        jacobian = np.asarray(robot_model.jacobian(q), dtype=float)
-        weighted_jacobian = jacobian.copy()
-        weighted_jacobian[3:6, :] *= config.orientation_weight
-        lower, upper = _step_bounds(robot_model, q, q_start, config)
-        delta = _solve_qp(
-            weighted_jacobian,
-            weighted_error,
-            config.damping,
-            config.motion_weight,
-            lower,
-            upper,
-            config.qp_solver,
-        )
-        q = np.asarray(robot_model.integrate(q, delta), dtype=float)
-
-    final_error = np.asarray(robot_model.pose_error(q, goal_pose), dtype=float)
-    position_error = float(np.linalg.norm(final_error[:3]))
-    orientation_error = float(np.linalg.norm(final_error[3:6]))
-    status = (
-        SolveStatus.APPROXIMATE
-        if _is_approximate(position_error, orientation_error, config)
-        else SolveStatus.NON_CONVERGENT
-    )
-    return _build_result(
-        status,
-        robot_model,
-        q,
-        goal_pose,
-        position_error,
-        orientation_error,
-        len(error_history),
-        "solution classified after reaching a stopping condition",
-        q_start,
-        error_history,
-    )
+            stagnant_count += 1
+            max_stagnant_count = max(max_stagnant_count, stagnant_count)
+        
+        position_error = _position_error(best_pose, target_pose)
+    orientation_error = robot_model.orientation_error_norm(best_q, target_pose)
+    return SolveResult(
+        status=_final_status(position_error, orientation_error, config),
+        joint_position=best_q,
+        achieved_pose=best_pose,
+        position_error=position_error,
+        orientation_error=orientation_error,
+        iterations=config.max_iterations,
+        message=_failure_message(
+            robot_model,
+            best_q,
+            q_ref,
+            config,
+            position_error,
+            orientation_error,
+            max_stagnant_count,
+        ),
+        
 
 
-def _step_bounds(
-    robot_model: RobotModel,
-    q: np.ndarray,
-    q_start: np.ndarray,
-    config: ConstraintConfig,
-) -> tuple[np.ndarray, np.ndarray]:
-    joint_lower = np.array([limit.lower for limit in robot_model.joint_limits]) - q
-    joint_upper = np.array([limit.upper for limit in robot_model.joint_limits]) - q
-    step_lower = np.full(robot_model.dof, -config.max_step)
-    step_upper = np.full(robot_model.dof, config.max_step)
-    total_jump = np.asarray(config.max_solution_jump, dtype=float)
-    total_lower = q_start - total_jump - q
-    total_upper = q_start + total_jump - q
-    lower = np.maximum.reduce([joint_lower, step_lower, total_lower])
-    upper = np.minimum.reduce([joint_upper, step_upper, total_upper])
-    return lower, upper
 
 
-def _solve_qp(
-    jacobian: np.ndarray,
-    error: np.ndarray,
-    damping: float,
-    motion_weight: float,
-    lower: np.ndarray,
-    upper: np.ndarray,
-    solver_name: str,
-) -> np.ndarray:
-    dof = jacobian.shape[1]
-    hessian = jacobian.T @ jacobian + (damping + motion_weight) * np.eye(dof)
-    gradient = -(jacobian.T @ error)
-    if solver_name.lower() == "osqp":
-        try:
-            return _solve_with_osqp(hessian, gradient, lower, upper)
-        except Exception:
-            pass
-    unconstrained = -np.linalg.solve(hessian, gradient)
-    return np.clip(unconstrained, lower, upper)
 
 
-def _solve_with_osqp(
-    hessian: np.ndarray,
-    gradient: np.ndarray,
-    lower: np.ndarray,
-    upper: np.ndarray,
-) -> np.ndarray:
-    import osqp
-    from scipy import sparse
 
-    problem = osqp.OSQP()
-    problem.setup(
-        P=sparse.csc_matrix((hessian + hessian.T) / 2.0),
-        q=gradient,
-        A=sparse.eye(hessian.shape[0], format="csc"),
-        l=lower,
-        u=upper,
-        verbose=False,
-        polishing=False,
-    )
-    result = problem.solve()
-    if result.info.status_val not in {1, 2}:
-        raise RuntimeError(f"OSQP failed with status {result.info.status}")
-    return np.asarray(result.x, dtype=float)
 
 
 def _weighted_error(error: np.ndarray, orientation_weight: float) -> np.ndarray:
@@ -358,6 +279,21 @@ def _fallback_pose(robot_model: RobotModel, joints: Sequence[float]) -> Pose3D:
     except Exception:
         pass
     return Pose3D(0.0, 0.0, 0.0)
+
+
+def _final_status(
+    position_error: float,
+    orientation_error: float,
+    config: ConstraintConfig,
+) -> SolveStatus:
+    if (
+        position_error <= config.approx_position_multiplier * config.position_tolerance
+        and orientation_error
+        <= config.approx_orientation_multiplier * config.orientation_tolerance
+    ):
+        return SolveStatus.APPROXIMATE
+    return SolveStatus.NON_CONVERGENCE
+
 
 
 def _validate_inputs(

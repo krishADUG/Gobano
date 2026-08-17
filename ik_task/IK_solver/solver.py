@@ -15,7 +15,7 @@ class SolveStatus(str, Enum):
     SUCCESS = "success"
     APPROXIMATE = "approximate"
     INVALID_INPUT = "invalid_input"
-    NON_CONVERGENT = "non_convergent"
+    NON_CONVERGENCE = "non_convergence"
 
 
 @dataclass(frozen=True)
@@ -109,12 +109,29 @@ def solve(
             iterations=0,
             message=invalid_reason,
         )
+    ## check if the target pose is reachable and inside the workspace of the robot
+    q_ref = robot_model.clamp_to_limits(current_joint_position)
+    workspace_reason = _workspace_violation(robot_model, target_pose)
+    if workspace_reason:
+        fallback = robot_model.forward_kinematics(q_ref)
+        return SolveResult(
+            status=SolveStatus.NON_CONVERGENCE,
+            joint_position=q_ref,
+            achieved_pose=fallback,
+            position_error=_position_error(fallback, target_pose),
+            orientation_error=robot_model.orientation_error_norm(q_ref, target_pose),
+            iterations=0,
+            message=workspace_reason,
+        )
 
-    q_start = np.asarray(start_position, dtype=float)
-    q = q_start.copy()
-    error_history: list[float] = []
-    best_error = float("inf")
-    stagnant_iterations = 0
+    q = list(q_ref)
+    best_q = list(q)
+    best_pose = robot_model.forward_kinematics(q)
+    best_cost = _spatial_cost(robot_model, target_pose, q, q_ref, config)
+    if collect_trace:
+        _append_trace(trace, 0, robot_model, target_pose, q, q_ref, config)
+    stagnant_count = 0
+    max_stagnant_count = 0
 
     for iteration in range(1, config.max_iterations + 1):
         error = np.asarray(robot_model.pose_error(q, goal_pose), dtype=float)
@@ -315,6 +332,7 @@ def _coerce_joints(start_position: Sequence[float]) -> list[float]:
         return [float(value) for value in start_position]
     except TypeError:
         return []
+    
 
 def _fallback_pose(robot_model: RobotModel, joints: Sequence[float]) -> Pose3D:
     try:
@@ -367,4 +385,30 @@ def _validate_inputs(
         return "max_solution_jump values must be finite positive numbers."
     return None
 
+
+def _workspace_violation(robot_model: RobotModel, target_pose: Pose3D) -> str | None:
+    center = getattr(robot_model, "workspace_center", None)
+    radius = getattr(robot_model, "workspace_radius", None)
+    if center is None or radius is None:
+        return None
+    distance = sqrt(
+        (target_pose.x - center[0]) ** 2
+        + (target_pose.y - center[1]) ** 2
+        + (target_pose.z - center[2]) ** 2
+    )
+    outside_by = distance - float(radius)
+    if outside_by <= 0.0:
+        return None
+    return (
+        "Point outside the workspace. Target is outside workspace"
+        f"by {outside_by:.4f} m."
+    )
+
+
+def _position_error(pose: Pose3D, target_pose: Pose3D) -> float:
+    return sqrt(
+        (target_pose.x - pose.x) ** 2
+        + (target_pose.y - pose.y) ** 2
+        + (target_pose.z - pose.z) ** 2
+    )
 

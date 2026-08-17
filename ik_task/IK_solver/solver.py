@@ -150,12 +150,13 @@ def solve(
                 message="Target reached within tolerances.",
             )
         
-        error = np.asarray(robot_model.pose_error(q, goal_pose), dtype=float)
-        weighted_error = _weighted_error(error, config.orientation_weight)
-        position_error = float(np.linalg.norm(error[:3]))
-        orientation_error = float(np.linalg.norm(error[3:6]))
-        combined_error = float(np.linalg.norm(weighted_error))
-        error_history.append(combined_error)
+        error = np.asarray(robot_model.pose_error(q, target_pose), dtype=float)
+        jacobian = np.asarray(robot_model.jacobian(q), dtype=float)
+        weights = np.array([1.0, 1.0, 1.0, *([config.orientation_weight] * 3)])
+        weighted_jacobian = jacobian * weights[:, None]
+        weighted_error = error * weights
+        dq = _qp_step(weighted_jacobian, weighted_error, q, q_ref, robot_model, config)
+
 
         if _is_success(position_error, orientation_error, config):
             return _build_result(
@@ -445,3 +446,13 @@ def _spatial_cost(
         + (config.orientation_weight * orientation_error) ** 2
         + config.motion_weight * motion_cost
     )
+
+
+def _qp_step(
+    jacobian,
+    error_vector,
+    q: Sequence[float],
+    q_ref: Sequence[float],
+    robot_model: RobotModel,
+    config: ConstraintConfig,
+):

@@ -1,0 +1,28 @@
+# IK solver settings for the UR5 model.
+
+#accepted error in position & oreientation, measured in meters and radians.
+position_tolerance: 0.002            
+orientation_tolerance: 0.005    
+
+# acceptied multiplier for classify approximate solutions.
+approx_position_multiplier: 5.0
+approx_orientation_multiplier: 5.0
+
+# solver settings
+qp_solver: osqp
+improvement_epsilon: 0.000000001
+max_iterations: 50
+orientation_weight: 0.5
+motion_weight: 0.0001
+
+# no. of iterations without improvement before stopping the solver.
+stagnation_iterations: 20  
+
+#lower value cause coinvergence faster but may cause instability.
+damping: 0.03 
+
+#accepted joint step for iterative solver.
+max_step: 0.2   
+
+# maximum allowed jump in joint space.
+max_solution_jump: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]  

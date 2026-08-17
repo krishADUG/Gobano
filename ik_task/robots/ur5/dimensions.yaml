@@ -1,0 +1,16 @@
+# UR5 dimensions used by robots/ur5/ur5.urdf.
+# Source: Universal Robots published UR5 DH parameters.
+name: ur5
+source: https://www.universal-robots.com/articles/ur/application-installation/dh-parameters-for-calculations-of-kinematics-and-dynamics/
+end_effector_frame: tool0
+home_joint_position: [0.0, -1.5707963267948966, 1.5707963267948966, -1.5707963267948966, -1.5707963267948966, 0.0]
+workspace:
+  center: [0.0, 0.0, 0.0]
+  radius: 1.05
+dh_parameters:
+  a: [0.0, -0.425, -0.39225, 0.0, 0.0, 0.0]
+  d: [0.089159, 0.0, 0.0, 0.10915, 0.09465, 0.0823]
+  alpha: [1.5707963267948966, 0.0, 0.0, 1.5707963267948966, -1.5707963267948966, 0.0]
+joint_limits:
+  lower: [-6.283185307179586, -6.283185307179586, -6.283185307179586, -6.283185307179586, -6.283185307179586, -6.283185307179586]
+  upper: [6.283185307179586, 6.283185307179586, 6.283185307179586, 6.283185307179586, 6.283185307179586, 6.283185307179586]

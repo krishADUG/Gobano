@@ -79,6 +79,17 @@ def load_constraint_config(
     values = {key: data[key] for key in REQUIRED_CONFIG_KEYS}
     return ConstraintConfig(**values)
 
+
+@dataclass(frozen=True)
+class IterationTrace:
+    iteration: int
+    joint_position: list[float]
+    achieved_pose: Pose3D
+    position_error: float
+    orientation_error: float
+    cost: float
+
+
 @dataclass(frozen=True)
 class SolveResult:
     status: SolveStatus
@@ -88,17 +99,20 @@ class SolveResult:
     orientation_error: float
     iterations: int
     message: str
+    trace: list[IterationTrace]
 
-    
+
 def solve(
     robot_model: RobotModel,
     target_pose: Pose3D,
     current_joint_position: Sequence[float],
     constraints: ConstraintConfig,
+    collect_trace: bool = False,
 ) -> SolveResult:
     config = constraints
+    trace: list[IterationTrace] = []
     invalid_reason = _validate_inputs(robot_model, target_pose, current_joint_position, config)
-    if invalid_reason: 
+    if invalid_reason:
         fallback = _fallback_pose(robot_model, current_joint_position)
         return SolveResult(
             status=SolveStatus.INVALID_INPUT,
@@ -108,9 +122,9 @@ def solve(
             orientation_error=float("inf"),
             iterations=0,
             message=invalid_reason,
+            trace=trace,
         )
-    
-    ## check if the target pose is reachable and inside the workspace of the robot
+
     q_ref = robot_model.clamp_to_limits(current_joint_position)
     workspace_reason = _workspace_violation(robot_model, target_pose)
     if workspace_reason:
@@ -123,12 +137,15 @@ def solve(
             orientation_error=robot_model.orientation_error_norm(q_ref, target_pose),
             iterations=0,
             message=workspace_reason,
+            trace=trace,
         )
 
     q = list(q_ref)
     best_q = list(q)
     best_pose = robot_model.forward_kinematics(q)
     best_cost = _spatial_cost(robot_model, target_pose, q, q_ref, config)
+    if collect_trace:
+        _append_trace(trace, 0, robot_model, target_pose, q, q_ref, config)
     stagnant_count = 0
     max_stagnant_count = 0
 
@@ -148,8 +165,9 @@ def solve(
                 orientation_error=orientation_error,
                 iterations=iteration - 1,
                 message="Target reached within tolerances.",
+                trace=trace,
             )
-        
+
         error = np.asarray(robot_model.pose_error(q, target_pose), dtype=float)
         jacobian = np.asarray(robot_model.jacobian(q), dtype=float)
         weights = np.array([1.0, 1.0, 1.0, *([config.orientation_weight] * 3)])
@@ -160,10 +178,14 @@ def solve(
         if float(np.max(np.abs(dq))) < 1e-12:
             stagnant_count += 1
             max_stagnant_count = max(max_stagnant_count, stagnant_count)
+            if collect_trace:
+                _append_trace(trace, iteration, robot_model, target_pose, q, q_ref, config)
             continue
 
         q = robot_model.integrate(q, dq)
-
+        if collect_trace:
+            _append_trace(trace, iteration, robot_model, target_pose, q, q_ref, config)
+        pose = robot_model.forward_kinematics(q)
         cost = _spatial_cost(robot_model, target_pose, q, q_ref, config)
         if cost + config.improvement_epsilon < best_cost:
             best_cost = cost
@@ -173,78 +195,49 @@ def solve(
         else:
             stagnant_count += 1
             max_stagnant_count = max(max_stagnant_count, stagnant_count)
-        
-        position_error = _position_error(best_pose, target_pose)
-        orientation_error = robot_model.orientation_error_norm(best_q, target_pose)
-        return SolveResult(
-            status=_final_status(position_error, orientation_error, config),
-            joint_position=best_q,
-            achieved_pose=best_pose,
-            position_error=position_error,
-            orientation_error=orientation_error,
-            iterations=config.max_iterations,
-            message=_failure_message(
-                robot_model,
-                best_q,
-                q_ref,
-                config,
-                position_error,
-                orientation_error,
-                max_stagnant_count,
-            ),
-        )
 
-
-def _final_status(
-    position_error: float,
-    orientation_error: float,
-    config: ConstraintConfig,
-) -> SolveStatus:
-    if (
-        position_error <= config.approx_position_multiplier * config.position_tolerance
-        and orientation_error
-        <= config.approx_orientation_multiplier * config.orientation_tolerance
-    ):
-        return SolveStatus.APPROXIMATE
-    return SolveStatus.NON_CONVERGENCE
-
-
-def _failure_message(
-    robot_model: RobotModel,
-    joints: Sequence[float],
-    reference_joints: Sequence[float],
-    config: ConstraintConfig,
-    position_error: float,
-    orientation_error: float,
-    max_stagnant_count: int,
-) -> str:
-    return (
-        _joint_limit_reason(robot_model, joints)
-        or _jump_limit_reason(joints, reference_joints, config)
-        or _stagnation_reason(config, max_stagnant_count, position_error, orientation_error)
-        or (
-            f"Solver exhausted max_iterations={config.max_iterations} while remaining "
-            "outside tolerance. Final "
-            f"position error {position_error:.5f} m and orientation error "
-            f"{orientation_error:.5f} rad."
-        )
+    position_error = _position_error(best_pose, target_pose)
+    orientation_error = robot_model.orientation_error_norm(best_q, target_pose)
+    return SolveResult(
+        status=_final_status(position_error, orientation_error, config),
+        joint_position=best_q,
+        achieved_pose=best_pose,
+        position_error=position_error,
+        orientation_error=orientation_error,
+        iterations=config.max_iterations,
+        message=_failure_message(
+            robot_model,
+            best_q,
+            q_ref,
+            config,
+            position_error,
+            orientation_error,
+            max_stagnant_count,
+        ),
+        trace=trace,
     )
 
 
-def _coerce_joints(start_position: Sequence[float]) -> list[float]:
-    try:
-        return [float(value) for value in start_position]
-    except TypeError:
-        return []
-    
-
-def _fallback_pose(robot_model: RobotModel, joints: Sequence[float]) -> Pose3D:
-    try:
-        if len(joints) == robot_model.dof:
-            return robot_model.forward_kinematics(robot_model.clamp_to_limits(joints))
-    except Exception:
-        pass
-    return Pose3D(0.0, 0.0, 0.0)
+def _append_trace(
+    trace: list[IterationTrace],
+    iteration: int,
+    robot_model: RobotModel,
+    target_pose: Pose3D,
+    q: Sequence[float],
+    q_ref: Sequence[float],
+    config: ConstraintConfig,
+) -> None:
+    pose = robot_model.forward_kinematics(q)
+    trace.append(
+        IterationTrace(
+            iteration=iteration,
+            joint_position=list(q),
+            achieved_pose=pose,
+            position_error=_position_error(pose, target_pose),
+            orientation_error=robot_model.orientation_error_norm(q, target_pose),
+            cost=_spatial_cost(robot_model, target_pose, q, q_ref, config),
+        )
+    )
 
 
 def _validate_inputs(
@@ -290,6 +283,101 @@ def _validate_inputs(
     return None
 
 
+def _final_status(
+    position_error: float,
+    orientation_error: float,
+    config: ConstraintConfig,
+) -> SolveStatus:
+    if (
+        position_error <= config.approx_position_multiplier * config.position_tolerance
+        and orientation_error
+        <= config.approx_orientation_multiplier * config.orientation_tolerance
+    ):
+        return SolveStatus.APPROXIMATE
+    return SolveStatus.NON_CONVERGENCE
+
+
+def _failure_message(
+    robot_model: RobotModel,
+    joints: Sequence[float],
+    reference_joints: Sequence[float],
+    config: ConstraintConfig,
+    position_error: float,
+    orientation_error: float,
+    max_stagnant_count: int,
+) -> str:
+    return (
+        _joint_limit_reason(robot_model, joints)
+        or _jump_limit_reason(joints, reference_joints, config)
+        or _stagnation_reason(config, max_stagnant_count, position_error, orientation_error)
+        or (
+            f"Solver exhausted max_iterations={config.max_iterations} while remaining "
+            "outside tolerance. Final "
+            f"position error {position_error:.5f} m and orientation error "
+            f"{orientation_error:.5f} rad."
+        )
+    )
+
+
+def _stagnation_reason(
+    config: ConstraintConfig,
+    max_stagnant_count: int,
+    position_error: float,
+    orientation_error: float,
+) -> str | None:
+    if max_stagnant_count < config.stagnation_iterations:
+        return None
+    return (
+        "Solver stagnated: the best cost did not improve by at least "
+        f"improvement_epsilon={config.improvement_epsilon:g} for "
+        f"{max_stagnant_count} consecutive iteration(s). Reached "
+        f"max_iterations={config.max_iterations} with position error "
+        f"{position_error:.5f} m and orientation error {orientation_error:.5f} rad."
+    )
+
+
+def _joint_limit_reason(robot_model: RobotModel, joints: Sequence[float]) -> str | None:
+    active_limits = []
+    tolerance = 1e-4
+    for index, (joint, limit) in enumerate(zip(joints, robot_model.joint_limits), start=1):
+        if abs(joint - limit.lower) <= tolerance:
+            active_limits.append(f"J{index} lower_limit")
+        elif abs(joint - limit.upper) <= tolerance:
+            active_limits.append(f"J{index} upper_limit")
+    if not active_limits:
+        return None
+    return (
+        "Joint limits prevented convergence. "
+        f"Active bounded joint(s): {', '.join(active_limits)}."
+    )
+
+
+def _jump_limit_reason(
+    joints: Sequence[float],
+    reference_joints: Sequence[float],
+    config: ConstraintConfig,
+) -> str | None:
+    active_limit: tuple[int, float, float] | None = None
+    tolerance = 1e-4
+    for index, (joint, reference, jump_limit) in enumerate(
+        zip(joints, reference_joints, config.max_solution_jump),
+        start=1,
+    ):
+        jump = abs(joint - reference)
+        if jump < jump_limit - tolerance:
+            continue
+        if active_limit is None or jump > active_limit[1]:
+            active_limit = (index, jump, jump_limit)
+    if active_limit is None:
+        return None
+    index, jump, jump_limit = active_limit
+    return (
+        "Jump limits prevented convergence. "
+        f"Best bounded solution is at the J{index} jump limit "
+        f"({jump:.4f} rad of {jump_limit:.4f} rad allowed)."
+    )
+
+
 def _workspace_violation(robot_model: RobotModel, target_pose: Pose3D) -> str | None:
     center = getattr(robot_model, "workspace_center", None)
     radius = getattr(robot_model, "workspace_radius", None)
@@ -305,8 +393,17 @@ def _workspace_violation(robot_model: RobotModel, target_pose: Pose3D) -> str | 
         return None
     return (
         "Point outside the workspace. Target is outside workspace"
-        f"by {outside_by:.4f} m."
+        f" by {outside_by:.4f} m."
     )
+
+
+def _fallback_pose(robot_model: RobotModel, joints: Sequence[float]) -> Pose3D:
+    try:
+        if len(joints) == robot_model.dof:
+            return robot_model.forward_kinematics(robot_model.clamp_to_limits(joints))
+    except Exception:
+        pass
+    return Pose3D(0.0, 0.0, 0.0)
 
 
 def _position_error(pose: Pose3D, target_pose: Pose3D) -> float:
@@ -401,4 +498,3 @@ def _qp_step(
     except np.linalg.LinAlgError:
         step = -np.linalg.pinv(hessian) @ gradient
     return np.clip(step, lower_bounds, upper_bounds)
-

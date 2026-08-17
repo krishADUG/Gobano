@@ -1,0 +1,17 @@
+[project]
+name = "robot-agnostic-constrained-ik"
+version = "0.1.0"
+description = "Plain-Python proof of concept constrained inverse kinematics solver"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pin",
+    "qpsolvers",
+    "osqp",
+    "meshcat",
+    "PyYAML",
+    "Pillow",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

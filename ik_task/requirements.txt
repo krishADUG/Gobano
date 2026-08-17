@@ -1,0 +1,7 @@
+numpy
+pin
+qpsolvers
+osqp
+meshcat
+PyYAML
+Pillow

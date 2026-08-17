@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from math import isfinite, sqrt
 from pathlib import Path
 from typing import Sequence
 
 import numpy as np
 
 from .pinocchio_model import ALIASES, ROBOTS_ROOT, Pose3D, RobotModel
-from .postprocess import collect_notes
 
 
 class SolveStatus(str, Enum):
@@ -88,56 +88,22 @@ class SolveResult:
     orientation_error: float
     iterations: int
     message: str
-    notes: list[str]
-    error_history: list[float]
 
-    @property
-    def final_error(self) -> float:
-        return float(np.hypot(self.position_error, self.orientation_error))
-
-
-class IKSolver:
-    def __init__(
-        self,
-        robot_model: RobotModel,
-        config: ConstraintConfig | None = None,
-    ) -> None:
-        self.robot_model = robot_model
-        self.config = config or load_constraint_config(getattr(robot_model, "name", None))
-
-    def solve(
-        self,
-        goal_pose: Pose3D,
-        start_position: Sequence[float],
-        config: ConstraintConfig | None = None,
-    ) -> SolveResult:
-        return solve(
-            self.robot_model,
-            goal_pose,
-            start_position,
-            config=config or self.config,
-        )
-
-
+    
 def solve(
     robot_model: RobotModel,
-    goal_pose: Pose3D,
-    start_position: Sequence[float],
-    config: ConstraintConfig | None = None,
+    target_pose: Pose3D,
+    current_joint_position: Sequence[float],
+    constraints: ConstraintConfig,
 ) -> SolveResult:
-    config = config or load_constraint_config(getattr(robot_model, "name", None))
-    invalid_message = _validate_inputs(robot_model, goal_pose, start_position, config)
-    if invalid_message is not None:
-        start = _coerce_joints(start_position)
-        achieved_pose = (
-            robot_model.forward_kinematics(start)
-            if len(start) == robot_model.dof
-            else Pose3D(0.0, 0.0, 0.0)
-        )
+    config = constraints
+    invalid_reason = _validate_inputs(robot_model, target_pose, current_joint_position, config)
+    if invalid_reason: 
+        fallback = _fallback_pose(robot_model, current_joint_position)
         return SolveResult(
             status=SolveStatus.INVALID_INPUT,
-            joint_position=start,
-            achieved_pose=achieved_pose,
+            joint_position=list(current_joint_position),
+            achieved_pose=fallback,
             position_error=float("inf"),
             orientation_error=float("inf"),
             iterations=0,
@@ -371,3 +337,11 @@ def _coerce_joints(start_position: Sequence[float]) -> list[float]:
         return [float(value) for value in start_position]
     except TypeError:
         return []
+
+def _fallback_pose(robot_model: RobotModel, joints: Sequence[float]) -> Pose3D:
+    try:
+        if len(joints) == robot_model.dof:
+            return robot_model.forward_kinematics(robot_model.clamp_to_limits(joints))
+    except Exception:
+        pass
+    return Pose3D(0.0, 0.0, 0.0)

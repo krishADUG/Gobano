@@ -109,6 +109,8 @@ def solve(
     constraints: ConstraintConfig,
     collect_trace: bool = False,
 ) -> SolveResult:
+    
+    #validate inoputs and return early if invalid
     config = constraints
     trace: list[IterationTrace] = []
     invalid_reason = _validate_inputs(robot_model, target_pose, current_joint_position, config)
@@ -124,7 +126,8 @@ def solve(
             message=invalid_reason,
             trace=trace,
         )
-
+    
+    #check if target pose is outside workspace 
     q_ref = robot_model.clamp_to_limits(current_joint_position)
     workspace_reason = _workspace_violation(robot_model, target_pose)
     if workspace_reason:
@@ -174,7 +177,7 @@ def solve(
         weighted_jacobian = jacobian * weights[:, None]
         weighted_error = error * weights
         dq = _qp_step(weighted_jacobian, weighted_error, q, q_ref, robot_model, config)
-
+        #check solution stagnation
         if float(np.max(np.abs(dq))) < 1e-12:
             stagnant_count += 1
             max_stagnant_count = max(max_stagnant_count, stagnant_count)

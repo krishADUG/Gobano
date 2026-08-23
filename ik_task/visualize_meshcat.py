@@ -54,6 +54,7 @@ def main() -> None:
     parser.add_argument(
         "--scene",
         "--scenario",
+        dest="scenario",
         choices=["standard", "custom"],
         default="standard",
         help="Scene set to show: standard five or custom only.",
@@ -151,8 +152,8 @@ def main() -> None:
 
 
 def _meshcat_scenarios(robot, scene_mode: str) -> list[Scenario]:
-    if scene_mode == "custom":
-        return [build_custom_scenario(robot)]
+    if scene_mode == "standard":
+        return build_scenarios(robot)
     if scene_mode == "custom":
         return [build_custom_scenario(robot)]
     raise ValueError(f"Unknown scene mode: {scene_mode}")
